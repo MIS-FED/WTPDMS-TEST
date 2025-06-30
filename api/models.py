@@ -39,6 +39,7 @@ class TripTicketModel(models.Model):
     remarks = models.TextField()
     is_posted = models.BooleanField()
     is_final_trip = models.BooleanField()
+    updated_date = models.DateTimeField()
     class Meta:
         db_table = 'scm_tr_trip_ticket'
         managed = False
@@ -57,6 +58,8 @@ class TripDetailsModel(models.Model):
     trip_ticket_id = models.BigIntegerField()
     branch_id = models.BigIntegerField()
     branch_name = models.CharField(max_length=255)
+    entity_id = models.BigIntegerField()
+    entity_name = models.CharField(max_length=255)
     trip_ticket_detail_id = models.BigAutoField(primary_key=True)
     ref_trans_date = models.DateTimeField()
     ref_trans_id = models.BigIntegerField()
@@ -72,6 +75,7 @@ class TripDetailsModel(models.Model):
     is_posted = models.BooleanField()
     is_delivered = models.BooleanField()
     updated_date = models.DateTimeField()
+    created_date = models.DateTimeField()
     
     class Meta:
         db_table = 'scm_tr_trip_ticket_detail'
@@ -84,7 +88,15 @@ class TripBranchModel(models.Model):
     class Meta:
         db_table = 'fin_mf_branch'
         managed = False
-        
+
+class TripCustomerModel(models.Model):
+    entity_id = models.BigIntegerField(primary_key = True)
+    entity_name = models.CharField(max_length=255)
+
+    class Meta:
+        db_table = 'fin_mf_entity'
+        managed = False
+
 class OutslipItemQtyModel(models.Model):
     server_id = models.BigIntegerField(default=1)
     outslip_to_id = models.BigIntegerField() # ref_trans_id in scm_tr_trip_ticket_detail
@@ -165,7 +177,7 @@ class TripTicketBranchLogsModel(models.Model):
     latitude_out = models.FloatField(null=True, blank=True)  
     longitude_in = models.FloatField(null=True, blank=True)
     longitude_out = models.FloatField(null=True, blank=True)  
-    branch = models.ForeignKey(TripBranchModel, on_delete=models.CASCADE, related_name='logs')
+    branch_id = models.BigIntegerField() 
     reason = models.CharField(max_length=255,null=True)
 
     class Meta:
@@ -241,4 +253,67 @@ class TripTicketDetailReceivingModel(models.Model):
 
     class Meta:
         db_table = 'scm_tr_trip_ticket_detail_receiving'
+        managed = False
+
+
+
+###########SCANNER
+class InventoryCountRowManagerModel(models.Model):
+    server_id = models.BigIntegerField(default=1)
+    header_id = models.AutoField(primary_key=True)
+    mf_status_id = models.SmallIntegerField()
+    created_by = models.BigIntegerField()
+    created_date = models.DateTimeField()
+    updated_by = models.BigIntegerField()
+    updated_date = models.DateTimeField()
+
+    class Meta:
+        db_table = 'scm_ir_inventory_count_rm'
+        managed = False
+
+class ItemFullCountScanModel(models.Model):
+    server_id = models.BigIntegerField(default=1)
+    tmp_fullcount_id = models.AutoField(primary_key=True)
+    header_id = models.BigIntegerField()
+    layer_id = models.BigIntegerField()
+    item_id = models.BigIntegerField()
+    barcode = models.CharField(max_length=255, null=True)
+    item_qty = models.DecimalField(max_digits=12 ,decimal_places=4) 
+    created_by = models.BigIntegerField()
+    created_date = models.DateTimeField()
+    updated_by = models.BigIntegerField()
+    updated_date = models.DateTimeField()
+    
+    
+    class Meta:
+        db_table = 'scm_ir_item_fullcount_scan'
+        managed = False
+    
+class LayerMFModel(models.Model):
+    mf_status_id = models.SmallIntegerField()
+    layer_id = models.AutoField(primary_key=True)
+    full_code = models.CharField(max_length=255, null=True)
+    
+    class Meta:
+        db_table = 'scm_mf_layer'
+        managed = False
+
+class SerialFullCountScanModel(models.Model):
+    server_id = models.BigIntegerField(default=1)
+    serial_fullcount_id = models.AutoField(primary_key=True)
+    tmp_fullcount_id = models.BigIntegerField()
+    header_id = models.BigIntegerField()
+    layer_id = models.BigIntegerField()
+    item_id = models.BigIntegerField()
+    item_code = models.CharField(max_length=255, null=True)
+    serial_code = models.CharField(max_length=255, null=True)
+    batch_no = models.CharField(max_length=255, null=True)
+    serbat_id = models.BigIntegerField(null=True)
+    created_by = models.BigIntegerField()
+    created_date = models.DateTimeField()
+    updated_by = models.BigIntegerField()
+    updated_date = models.DateTimeField()
+    
+    class Meta:
+        db_table = 'scm_ir_serial_fullcount_scan'
         managed = False

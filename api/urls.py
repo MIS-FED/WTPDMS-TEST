@@ -8,8 +8,8 @@ from django.conf.urls.static import static
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns # new
 urlpatterns = [
     #path('ocr/', OCRView.as_view(), name='ocr'),
+    
     path('login/', LoginView.as_view(), name='login'),
-    path('register/', RegisterView.as_view(), name='register'),
     path('profile/', ProfileView.as_view(), name='profile'),
     path('triplist/', TripListView.as_view(), name='triplist'),
     path('tripdetails/', TripDetailView.as_view(), name='tripdetails'),
@@ -33,8 +33,20 @@ urlpatterns = [
     path('trip-ticket-receive/', TripTicketReceiveView.as_view(), name='receiveView'),
     path('cancel-outslip/', CancelOutslipView.as_view(), name='cancelOutslip'),
     path('trip_ticket_reports/', TripTicketReports.as_view(), name='tripticketreports'),
-    path('trip_ticket_branch_reports/', TripTicketBranchReports.as_view(), name='tripticketbranchreports'),
-    
+    path('trip_ticket_detail_reports/', TripTicketDetailReports.as_view(), name='tripticketbranchreports'),
+    path('branch_reports/', BranchReportsView.as_view(), name='branchreports'),
+    path('attendance_reports/', AttendanceReports.as_view(), name='attendancereports'),
+    path('initial_reports/', InitialReports.as_view(), name='initialreports'),
+    path('tripcustomer/', TripCustomerView.as_view(), name='tripcustomer'), #tsl
+    path('customerdetails/', CustomerDetailView.as_view(), name='customerdetail'), #tsl
+    path('manage-attendance-tsl/', ManageAttendanceTSL.as_view(), name='manageattendancetsl'), #tsl
+    path('layerview/', LayerMFView.as_view(), name='layerview'), #iris
+    path('inventorycount_row/', InventoryCountListView.as_view(), name='inventoryrow'),
+    path('save_barcode/', SaveBarcode.as_view(), name='savebarcode'),
+    path('save_serbat/', SaveSerbat.as_view(), name='savebarcode'),
+    path('barcode_list/', FullCountBarcodeView.as_view(), name='barcodelist'),
+    path('serbat_list/', FullCountSerialView.as_view(), name='serbatlist'),
+    path('selected_itemcode/', SelectedItemCodeView.as_view(), name='selecteditemcode'),
     re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
     re_path(r'^static/(?P<path>.*)$', serve, {'document_root': settings.STATIC_ROOT}),
 ]   

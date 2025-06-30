@@ -28,7 +28,7 @@ MEDIA_URL = '/media/'  # URL prefix for media files
 SECRET_KEY = 'django-insecure-w7qolrc)hfzt-l80rvs-p*mzknxh^soeuy*e^=2@9n2(-1tj=q'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 if DEBUG:
         STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 else:
@@ -38,9 +38,9 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 #ALLOWED_HOSTS = ["localhost", "127.0.0.1", "10.0.2.2", "176.16.1.126",  "192.168.1.200", "103.240.120.34", "192.168.5.251", "192.168.70.190", "192.168.70.184", "192.168.126.56", "mis-federick"]
 ALLOWED_HOSTS = ['*']
-BASE_URL = "http://176.16.1.126:8000/api"
+#BASE_URL = "http://176.16.1.126:8000/api"
 
-#BASE_URL = "http://winterpinegroup.com.ph:8000/api"
+BASE_URL = "http://winterpinegroup.com.ph:8001/api"
 # Application definition
 
 INSTALLED_APPS = [
@@ -68,6 +68,7 @@ REST_AUTH = {
 }
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
+        'api.passwordAuth.MultiDBJWTAuthentication',
         'rest_framework_simplejwt.authentication.JWTAuthentication',
         # Ensure JWT is configured correctly
     ),
@@ -142,7 +143,7 @@ DATABASES = {
  
     'default': {
         'ENGINE': 'mssql',
-        'NAME': 'bootstrap2_ret_052025',
+        'NAME': 'bootstrap2_ret_training_052025',
         'USER': 'sa',
         'PASSWORD':'WTP9@!979#100420!9',
         'HOST':'192.168.0.33\MSSQLTESTSERVER',
@@ -150,11 +151,11 @@ DATABASES = {
             'driver': 'ODBC Driver 17 for SQL Server',
             'extra_params': 'Encrypt=no;TrustServerCertificate=yes',
         },
-        'BASE_URL': 'http://176.16.1.126:8000/api' 
+        'BASE_URL': 'http://winterpinegroup.com.ph:8001/api' 
     },
     'tsl_db': {
         'ENGINE': 'mssql',
-        'NAME': 'test_bootstrap2_tsl',
+        'NAME': 'bootstrap2_dms_distri',
         'USER': 'sa',
         'PASSWORD':'WTP9@!979#100420!9',
         'HOST':'192.168.0.33\MSSQLTESTSERVER',
@@ -162,8 +163,9 @@ DATABASES = {
             'driver': 'ODBC Driver 17 for SQL Server',
             'extra_params': 'Encrypt=no;TrustServerCertificate=yes',
         },
-        'BASE_URL': 'http://176.16.1.126:8000/tsl'
-    }
+        'BASE_URL': 'http://winterpinegroup.com.ph:8001/tsl'
+    },
+    
 }
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators

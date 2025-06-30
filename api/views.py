@@ -4,7 +4,10 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.pagination import CursorPagination
 from django.contrib.auth import authenticate
+
+from api.passwordAuth import MultiDBJWTAuthentication
 from .serializers import *
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
@@ -24,6 +27,7 @@ from collections import defaultdict
 import json
 import time
 from django.db import connections
+from django.db.models import Q
 #pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 logger = logging.getLogger(__name__)
 def get_db_alias(request):
@@ -32,7 +36,8 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
+        db_alias = 'tsl_db' if request.path.startswith('/tsl/') else 'default'
+        serializer = LoginSerializer(data=request.data, db_alias=db_alias)
         if not serializer.is_valid():
             print(serializer.errors)  
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -54,28 +59,14 @@ class LoginView(APIView):
         }, status=status.HTTP_200_OK)
 
     
-class RegisterView(APIView):
-     def post(self, request):
-        serializer = UserRegistrationSerializer(data=request.data)
-        
-        if serializer.is_valid():
-            user = serializer.save()
-            return Response({
-                "message": "User registed successfully",
-                "user": {
-                    "username": user.username,
-                    "emp_no": user.emp_no,
-                    "date_created": user.date_created,
-                }
-            }, status=status.HTTP_201_CREATED)
-            
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
 class ProfileView(APIView):
+    authentication_classes = [MultiDBJWTAuthentication]
     permission_classes = [IsAuthenticated]
     def get(self, request):
         user = request.user
-        serializer = UserSerializer(user)
+        db_alias = get_db_alias(request)
+        fresh_user = User.objects.using(db_alias).get(pk=user.pk)
+        serializer = UserSerializer(fresh_user)
         return Response(serializer.data)
     
 class TripListView(APIView):
@@ -104,20 +95,11 @@ class TripBranchView(APIView):
         db_alias = get_db_alias(request)
         
         trip_ticket_id = request.query_params.get('id')
-        trip_ticket_no = request.query_params.get('trip_ticket_no')
-        if not trip_ticket_id and not trip_ticket_no:  
-            return Response({"error": "ID and No. is required."}, status=400)
+        if not trip_ticket_id:  
+            return Response({"error": "ID is required."}, status=400)
         
         try:
-            if trip_ticket_no and not trip_ticket_id:
-                trip_ticket = TripTicketModel.objects.using(db_alias).filter(
-                    trip_ticket_no = trip_ticket_no
-                ).first()
-                
-                if not trip_ticket:
-                    return Response({"error": "Trip ticket not found."}, status=404)
-                
-                trip_ticket_id = trip_ticket.trip_ticket_id
+           
                 
             tripdetail_data = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id)
             
@@ -143,7 +125,7 @@ class TripBranchView(APIView):
             for branch in branch_serializer.data 
         ]
         return Response(response_data)
-    
+
 
 class TripDetailView(APIView):
     permission_classes = [AllowAny]
@@ -236,21 +218,25 @@ class ManageAttendanceView(APIView):
         user_logs = TripTicketBranchLogsModel.objects.using(db_alias).order_by('-log_id').filter(created_by=user.user_id)
       
         trip_ticket_ids = user_logs.values_list('trip_ticket_id', flat=True).distinct()
-
-        # Get trip ticket numbers from TripTicketModel
+        branch_ids = user_logs.values_list('branch_id', flat=True).distinct()       
         trip_tickets = TripTicketModel.objects.using(db_alias).filter(
             trip_ticket_id__in=trip_ticket_ids
         )
+        trip_details = TripDetailsModel.objects.using(db_alias).filter(branch_id__in= branch_ids)
         ticket_number_map = {
             ticket.trip_ticket_id: ticket.trip_ticket_no
             for ticket in trip_tickets
         }
-
+        trip_detail_map = {
+            detail.branch_id:detail.branch_name
+            for detail in trip_details
+        }
         userlogs_serializer = BranchLogsSerializer(user_logs, many=True)
 
         response_data = []
         for log_data in userlogs_serializer.data:
             log_data['trip_ticket_no'] = ticket_number_map.get(log_data['trip_ticket_id'], '')
+            log_data['branch_name'] = trip_detail_map.get(log_data['branch_id'], '')
             response_data.append(log_data)
 
         return Response({'userlogs': response_data})
@@ -275,11 +261,17 @@ class ManageTripDetailView(APIView):
         #trip_ids = user_trips_qs.values_list('trip_ticket_id', flat=True).distinct()
         #trip_detail_ids = user_trips_qs.values_list('trip_ticket_detail_id', flat=True).distinct()
         logger.warning(f"tite {trip_ids}")
-        trip_details_qs = TripDetailsModel.objects.using(db_alias).order_by('branch_name', 'ref_trans_no').filter(
-            trip_ticket_id__in=trip_ids,
-            trip_ticket_detail_id__in=trip_detail_ids
-        )
+        if db_alias == 'default':
 
+            trip_details_qs = TripDetailsModel.objects.using(db_alias).order_by('branch_name', 'ref_trans_no').filter(
+                trip_ticket_id__in=trip_ids,
+                trip_ticket_detail_id__in=trip_detail_ids
+            )
+        else:
+            trip_details_qs = TripDetailsModel.objects.using(db_alias).order_by('entity_name', 'ref_trans_no').filter(
+                trip_ticket_id__in=trip_ids,
+                trip_ticket_detail_id__in=trip_detail_ids
+            )
         trip_tickets_map = {
             t.trip_ticket_id: {
                 "trip_ticket_no": t.trip_ticket_no,
@@ -306,7 +298,7 @@ class ManageTripDetailView(APIView):
                 "trip_ticket_detail_id": trip.trip_ticket_detail_id,
                 "trip_ticket_id": tid,
                 "trans_name": trip.trans_name,
-                "branch_name": trip.branch_name,
+                "branch_name": trip.branch_name if db_alias != 'tsl_db' else trip.entity_name,
                 "ref_trans_date": trip.ref_trans_date,
                 "ref_trans_id": trip.ref_trans_id,
                 "ref_trans_no": trip.ref_trans_no,
@@ -503,6 +495,8 @@ class ManageUploadedPictures(APIView):
                         'remarks': row['remarks'],
                         'items': [],
                         'branch_name': row.get('branch_name'),
+                        'entity_id': row['entity_id'],
+                        'entity_name': row['entity_name'],
                 }
                 branches.add(row['branch_id'])
                 connection = connections[db_alias]
@@ -596,6 +590,8 @@ class OutslipDetailView(APIView):
                         'remarks': row['remarks'],
                         'items': [],
                         'branch_name': row.get('branch_name'),
+                        'entity_id': row['entity_id'],
+                        'entity_name': row['entity_name'],
                 }
                 branches.add(row['branch_id'])
                 
@@ -638,24 +634,6 @@ class OutslipDetailView(APIView):
         except ValueError:
             return Response({"error": "Invalid ID format."}, status=400)
 
-
-
-#class OCRView(APIView):
- #   permission_classes = [AllowAny]
-    
-  #  def post(self, request):
-   #     file = request.FILES.get('image')
-    #    if not file:
-     #       return Response ({'error': 'No image uploaded'}, status=status.HTTP_400_BAD_REQUEST)
-      #  try:
-       #     image = Image.open(file)
-        #    text = pytesseract.image_to_string(image)
-         #   return Response({'text':text})
-        #except Exception as e:
-
-         #   return Response({'error':str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-        
 
 class UploadOutslipView(APIView):
     permission_classes = [AllowAny]
@@ -811,7 +789,6 @@ class UploadOutslipView(APIView):
                 'errors': errors if errors else None
             }, status=status.HTTP_201_CREATED)
         return Response({'error': 'All images failed to upload', 'details': errors}, status=status.HTTP_400_BAD_REQUEST)
-
 def reverse_geocode(lat, lon):
         url = "https://us1.locationiq.com/v1/reverse"
         params = {
@@ -900,7 +877,7 @@ class TripTicketReceiveView(APIView):
                     trans_code_id=item['trans_code_id'],
                     item_id=item['item_id'],
                     item_qty=item['item_qty'],
-                    doc_qty=item.get('doc_qty', item['item_qty']),
+                    doc_qty=float(item.get('doc_qty', item['item_qty'])), 
                     ref_trans_detail_id=item['ref_trans_detail_id'],
                     ref_trans_detail_pkg_id=item['ref_trans_detail_pkg_id'],
                     i_trans_no=item['i_trans_no'],
@@ -916,54 +893,6 @@ class TripTicketReceiveView(APIView):
                     updated_date=timezone.now(),
                 )
                 created_ids.append(new_record.receiving_id)
-            return Response ({"message": "insucc"}, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-class ReclockInAttendance(APIView):
-    permission_classes = [IsAuthenticated]
-    def post (self, request):
-        data = request.data
-        user_id = data['created_by']
-        trip_ticket_id=data.get('trip_ticket_id')
-        latitude = data.get('latitude_in')
-        longitude = data.get('longitude_in')
-        branch_id=data.get('branch_id')
-        #current_date = datetime.now().date()
-        if not latitude or not longitude:
-            return Response({"error": "Latitude and longitude are required."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            db_alias = get_db_alias(request)
-            no_clock_out = TripTicketBranchLogsModel.objects.using(db_alias).filter(
-            created_by=user_id,
-            time_out__isnull=True
-            ).exclude(branch_id=branch_id).first()
-
-            if no_clock_out:
-                trip_ticket_no = TripTicketModel.objects.using(db_alias).filter(trip_ticket_id=no_clock_out.trip_ticket_id).values_list('trip_ticket_no', flat=True).first()
-                return Response(
-                    {"error": f"You haven't clocked out at Trip Ticket No:{trip_ticket_no} Branch ID:{no_clock_out.branch_id}"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-           
-           
-            location_data = reverse_geocode(data['latitude_in'], data['longitude_in'])
-            location_in = location_data.get('display_name')
-            #logger.warning(f"🌍 Reverse geocode time: {(time.perf_counter() - geo_start) * 1000:.2f} ms")
-            TripTicketBranchLogsModel.objects.using(db_alias).create(
-                server_id=1,
-                trip_ticket_id=data['trip_ticket_id'],
-                branch_id=data['branch_id'],
-                time_in=timezone.now(),
-                created_by=data['created_by'],
-                created_date=timezone.now(),
-                updated_date=timezone.now(),
-                updated_by=data['created_by'],
-                location_in=location_in,
-                ip_address_in='RETIME IN',
-                latitude_in=data['latitude_in'],
-                longitude_in=data['longitude_in'],
-            )
-            #logger.warning(f"✅ Total request time: {(time.perf_counter() - start_time) * 1000:.2f} ms")
             return Response ({"message": "insucc"}, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -983,13 +912,18 @@ class ClockInAttendance(APIView):
         try:
             db_alias = get_db_alias(request)
             
-            has_posted = TripDetailsModel.objects.using(db_alias).filter(
-                trip_ticket_id = trip_ticket_id,
-                branch_id = branch_id,
-                is_posted = True
-            ).exists()
-            
-            
+            if db_alias == 'default':
+                has_posted = TripDetailsModel.objects.using(db_alias).filter(
+                    trip_ticket_id = trip_ticket_id,
+                    branch_id = branch_id,
+                    is_posted = True
+                ).exists()
+            else:
+                has_posted = TripDetailsModel.objects.using(db_alias).filter(
+                    trip_ticket_id = trip_ticket_id,
+                    entity_id = branch_id,
+                    is_posted = True
+                ).exists()
             no_clock_out = TripTicketBranchLogsModel.objects.using(db_alias).filter(
             created_by=user_id,
             time_out__isnull=True
@@ -1041,6 +975,7 @@ class ClockInAttendance(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        
         
 class UndoClockInAttendance(APIView):
     permission_classes = [IsAuthenticated]
@@ -1125,9 +1060,9 @@ class ClockOutAttendance(APIView):
         db_alias = get_db_alias(request)
         reason = data.get('reason')
         #current_date = datetime.now().date()
-        logger.warning(f"rere {reason}")
         
         try:
+           
            
             has_clocked_in = TripTicketBranchLogsModel.objects.using(db_alias).filter(
                 created_by=user_id,
@@ -1146,14 +1081,17 @@ class ClockOutAttendance(APIView):
                     {"error": f"You have already clocked out at {has_clocked_in.time_out}."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            trip_details = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id, branch_id=branch_id)
+            if db_alias == 'tsl_db':
+                trip_details = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id, entity_id=branch_id)
+            else:
+                trip_details = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id, branch_id=branch_id)
          
             if not reason:
                 for detail in trip_details:
                     if not OutslipImagesModel.objects.using(db_alias).filter(
                     trip_ticket_id= trip_ticket_id,
                     trip_ticket_detail_id=detail.trip_ticket_detail_id,
-                    branch_id=detail.branch_id,
+                    branch_id=detail.branch_id if db_alias != 'tsl_db' else detail.entity_id,
                     ).first():
                         return Response(
                        {"error": f"Upload missing for outslip #{detail.ref_trans_no}"},
@@ -1180,6 +1118,351 @@ class ClockOutAttendance(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
+
+class TripTicketReports(APIView):
+    permission_classes = [AllowAny]
+    
+    def get(self, request):
+        db_alias = get_db_alias(request)
+        trip_ticket_no = request.query_params.get('trip_ticket_no')
+
+        if not trip_ticket_no:
+            return Response ({"error": "Trip Ticket No. is required."}, status=400)
+        try:
+            trip_ticket =TripTicketModel.objects.using(db_alias).filter(
+                trip_ticket_no = trip_ticket_no).first()
+            if not trip_ticket:
+                    return Response({"Error": "Trip ticket not found."}, status= 404)                
+            
+            trip_ticket_id = trip_ticket.trip_ticket_id
+            
+            tripdetail_data = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id)
+            if not tripdetail_data.exists():
+                    return Response({"error": "No trip details found."}, status=404)
+            driver_ids = set()
+            if trip_ticket.entity_id:
+                driver_ids.add(trip_ticket.entity_id)
+            if trip_ticket.asst_entity_id:
+                driver_ids.add(trip_ticket.asst_entity_id)
+            if trip_ticket.dispatched_by:
+                driver_ids.add(trip_ticket.dispatched_by)
+            
+            drivers = TripDriverModel.objects.using(db_alias).filter(
+                entity_id__in=list(driver_ids)
+            )
+            driver_mapping = {driver.entity_id: driver.entity_name for driver in drivers}
+            lastBranchRecord = TripTicketBranchLogsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id).order_by('-created_date').first()
+            branch_name = None
+            if lastBranchRecord:
+                branch = TripBranchModel.objects.using(db_alias).filter(branch_id=lastBranchRecord.branch_id).first()
+                branch_name = branch.branch_name if branch else None
+                
+            tripdetail_serializer = TripDetailsSerializer(tripdetail_data, many=True)
+            tripData = []
+            for detail in tripdetail_serializer.data:
+                trip_detail = detail.copy()
+                trip_detail.update({
+                    'entity_name': driver_mapping.get(trip_ticket.entity_id, ''),
+                    'asst_entity_name': driver_mapping.get(trip_ticket.asst_entity_id, ''),
+                    'dispatcher': driver_mapping.get(trip_ticket.dispatched_by, ''),
+                    'plate_no': trip_ticket.plate_no,
+                    'last_branch': branch_name,
+                    'last_branch_time' : lastBranchRecord.updated_date if lastBranchRecord else None,
+                    'encoded_date': trip_ticket.updated_date,
+                    'lat': lastBranchRecord.latitude_in,
+                    'long': lastBranchRecord.longitude_in,
+
+                })
+                tripData.append(trip_detail)
+            if not tripdetail_data.exists():
+                return Response({"error": "Trip ticket not found."}, status=404)
+        except ValueError:
+            return Response({"error": "Invalid ID Format."}, status=400)
+        
+        return Response ({'tripdetails': tripData})
+    
+
+class BranchReportsView(APIView):
+    permission_classes = [AllowAny]
+    
+    def get(self, request):
+        db_alias = get_db_alias(request)
+        
+        trip_ticket_no = request.query_params.get('trip_ticket_no')
+        if not trip_ticket_no:  
+            return Response({"error": "Trip Ticket No. is required."}, status=400)
+        
+        try:
+           
+            trip_ticket =TripTicketModel.objects.using(db_alias).filter(
+            trip_ticket_no = trip_ticket_no).first()
+            tripdetail_data = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket.trip_ticket_id)
+            
+            if not tripdetail_data.exists():
+                return Response({"error": "Trip ticket not found."}, status=404)
+        except ValueError:
+            return Response({"error": "Invalid ID format."}, status=400)
+        
+        tripdetail_serializer = TripDetailsSerializer(tripdetail_data, many=True)
+        tripdetails = tripdetail_serializer.data
+
+        branch_ids = list(set([detail['branch_id'] for detail in tripdetails])) #convert to list and remove duplicates of branch id
+
+        branch_data = TripBranchModel.objects.using(db_alias).order_by('branch_name').filter(branch_id__in=branch_ids) # match
+        branch_serializer = TripBranchSerializer(branch_data, many=True)
+
+
+        response_data = [ 
+            { 
+            'branch_id': branch['branch_id'], 
+            'branch_name': branch['branch_name'] 
+            } 
+            for branch in branch_serializer.data 
+        ]
+        return Response(response_data)
+
+class TripTicketDetailReports(APIView):
+    permission_classes = [AllowAny]
+    
+    def get(self, request):
+        db_alias = get_db_alias(request)
+        
+        trip_ticket_no = request.query_params.get('trip_ticket_no')
+        branch_id = request.query_params.get('branch_id')
+        
+        if not trip_ticket_no:
+            return Response({"error": "Trip Ticket No. is required."}, status=400)
+        try:
+            trip_ticket =TripTicketModel.objects.using(db_alias).filter(
+            trip_ticket_no = trip_ticket_no).first()
+            tripdetail_data = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket.trip_ticket_id, branch_id=branch_id)
+            
+            if not tripdetail_data.exists():
+                return Response({"error": "Trip ticket not found."}, status=404)
+        except ValueError:
+            return Response({"error": "Invalid ID format."}, status=400)
+        
+        tripdetail_serializer = TripDetailsSerializer(tripdetail_data, many=True)
+        tripdetails = tripdetail_serializer.data
+
+        return Response(tripdetails)
+
+class AttendanceReports(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        db_alias = get_db_alias(request)
+              
+        trip_ticket_id = request.query_params.get('trip_ticket_id')
+        branch_id = request.query_params.get('branch_id')
+        try:
+
+            user_logs = TripTicketBranchLogsModel.objects.using(db_alias).order_by('-log_id').filter(trip_ticket_id=trip_ticket_id, branch_id = branch_id)
+        except ValueError:
+            return Response({"error": "Invalid ID format."}, status=400)
+        userlogs_serializer = BranchLogsSerializer(user_logs, many=True)
+
+        return Response(userlogs_serializer.data)
+    
+class InitialReports(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        db_alias = get_db_alias(request)
+
+        try: 
+            latest_log = TripTicketBranchLogsModel.objects.using(db_alias).order_by('-created_date').first()
+
+            initial_trip = TripTicketModel.objects.using(db_alias).filter(trip_ticket_id=latest_log.trip_ticket_id).order_by('-updated_date').first()
+            driver_ids = set()
+            if initial_trip.entity_id:
+                driver_ids.add(initial_trip.entity_id)
+            if initial_trip.asst_entity_id:
+                driver_ids.add(initial_trip.asst_entity_id)
+            if initial_trip.dispatched_by:
+                driver_ids.add(initial_trip.dispatched_by)
+            
+            drivers = TripDriverModel.objects.using(db_alias).filter(
+                entity_id__in=list(driver_ids)
+            )
+            driver_mapping = {driver.entity_id: driver.entity_name for driver in drivers}
+            
+            branch_name = None
+            if latest_log:
+                branch = TripBranchModel.objects.using(db_alias).filter(branch_id=latest_log.branch_id).first()
+                branch_name = branch.branch_name if branch else None 
+            logger.warning(f"trip{initial_trip} branch{latest_log}")
+            trip_serializer = TripTicketSerializer(initial_trip)
+            tripData = []
+            if isinstance(trip_serializer.data, dict):
+                trip_ticket = trip_serializer.data.copy() 
+                trip_ticket.update({
+                    'entity_name': driver_mapping.get(initial_trip.entity_id, ''),
+                    'asst_entity_name': driver_mapping.get(initial_trip.asst_entity_id, ''),
+                    'dispatcher': driver_mapping.get(initial_trip.dispatched_by, ''),
+                    'plate_no': initial_trip.plate_no,
+                    'last_branch': branch_name,
+                    'last_branch_time': latest_log.updated_date if latest_log else None,
+                    'encoded_date': initial_trip.updated_date,
+                    'lat': latest_log.latitude_in,
+                    'long': latest_log.longitude_in
+                })
+                tripData.append(trip_ticket)
+        except ValueError:
+            return Response({'error': 'Invalid.'}, status=400)
+        return Response ({'latestLog': tripData})
+#####################TSL DMS############################
+
+class TripCustomerView(APIView): #TSL ONLY
+    permission_classes = [AllowAny]
+   
+    def get(self, request):
+        db_alias = get_db_alias(request)
+        trip_ticket_id = request.query_params.get('id')
+        trip_ticket_no = request.query_params.get('trip_ticket_no')
+        if not trip_ticket_id and not trip_ticket_no:  
+            return Response({"error": "ID and No. is required."}, status=400)
+        
+        try:
+            if trip_ticket_no and not trip_ticket_id:
+                trip_ticket = TripTicketModel.objects.using(db_alias).filter(
+                    trip_ticket_no = trip_ticket_no
+                ).first()
+                
+                if not trip_ticket:
+                    return Response({"error": "Trip ticket not found."}, status=404)
+                
+                trip_ticket_id = trip_ticket.trip_ticket_id
+                
+            tripdetail_data = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id)
+            if not tripdetail_data.exists():
+                return Response({"error": "Trip ticket not found."}, status=404)
+        except ValueError:
+            return Response({"error": "Invalid ID Format."}, status=400)
+
+        tripdetail_serializer = TripDetailsSerializer(tripdetail_data, many=True)
+        tripdetails = tripdetail_serializer.data
+        address_mapping = {
+            detail['entity_id']: detail['full_address']
+            for detail in tripdetail_serializer.data
+            if detail.get('entity_id') and detail.get('full_address')
+        }
+        
+        customer_ids = list(set([detail['entity_id'] for detail in tripdetails]))
+        
+        customer_data = TripCustomerModel.objects.using(db_alias).order_by('entity_name').filter(entity_id__in=customer_ids)
+        customer_serializer = CustomerMFSerializer(customer_data, many=True)
+
+        response_data = [
+            {
+                'entity_id': customer['entity_id'],
+                'entity_name': customer['entity_name'],
+                'full_address': address_mapping.get(customer['entity_id'])
+            }
+            for customer in customer_serializer.data
+        ]
+        return Response(response_data)
+
+class CustomerDetailView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        db_alias = get_db_alias(request)
+
+        trip_ticket_id = request.query_params.get('trip_ticket_id')
+        customer_id = request.query_params.get('entity_id')
+
+        if not trip_ticket_id and not customer_id:
+            return Response ({"error": "trip ticket id is required"})
+
+        try: 
+            customer_details = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id,
+            entity_id=customer_id)
+            customer_serializer = TripDetailsSerializer(customer_details, many=True)
+  
+            logger.warning(customer_serializer.data)
+            return Response(customer_serializer.data)
+        except ValueError:
+            return Response({"error": "Invalid ID format."}, status=400)
+class ManageAttendanceTSL(APIView):
+    permission_classes = [IsAuthenticated]
+    def get (self, request):
+        user = request.user
+        db_alias = get_db_alias(request)
+
+        user_logs = TripTicketBranchLogsModel.objects.using(db_alias).order_by('-log_id').filter(created_by = user.user_id)
+        trip_ticket_ids = user_logs.values_list('trip_ticket_id', flat=True).distinct()
+        branch_ids = user_logs.values_list('branch_id', flat=True).distinct()       
+        trip_tickets = TripTicketModel.objects.using(db_alias).filter(trip_ticket_id__in = trip_ticket_ids)
+        trip_details = TripDetailsModel.objects.using(db_alias).filter(entity_id__in= branch_ids)
+        ticket_number_map = {
+            ticket.trip_ticket_id:ticket.trip_ticket_no
+            for ticket in trip_tickets
+        }
+        trip_detail_map = {
+            detail.entity_id:detail.entity_name
+            for detail in trip_details
+        }
+        userlogs_serializer = BranchLogsSerializer(user_logs, many=True)
+
+        response_data = []
+        for log_data in userlogs_serializer.data:
+            log_data['trip_ticket_no'] = ticket_number_map.get(log_data['trip_ticket_id'], '')
+            log_data['entity_name'] = trip_detail_map.get(log_data['branch_id'], '')
+            response_data.append(log_data)
+        return Response({'userlogs': response_data})
+    
+        
+class ReclockInAttendance(APIView):
+    permission_classes = [IsAuthenticated]
+    def post (self, request):
+        data = request.data
+        user_id = data['created_by']
+        trip_ticket_id=data.get('trip_ticket_id')
+        latitude = data.get('latitude_in')
+        longitude = data.get('longitude_in')
+        branch_id=data.get('branch_id')
+        #current_date = datetime.now().date()
+        if not latitude or not longitude:
+            return Response({"error": "Latitude and longitude are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            db_alias = get_db_alias(request)
+            no_clock_out = TripTicketBranchLogsModel.objects.using(db_alias).filter(
+            created_by=user_id,
+            time_out__isnull=True
+            ).exclude(branch_id=branch_id).first()
+
+            if no_clock_out:
+                trip_ticket_no = TripTicketModel.objects.using(db_alias).filter(trip_ticket_id=no_clock_out.trip_ticket_id).values_list('trip_ticket_no', flat=True).first()
+                return Response(
+                    {"error": f"You haven't clocked out at Trip Ticket No:{trip_ticket_no} Branch ID:{no_clock_out.branch_id}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+           
+           
+            location_data = reverse_geocode(data['latitude_in'], data['longitude_in'])
+            location_in = location_data.get('display_name')
+            #logger.warning(f"🌍 Reverse geocode time: {(time.perf_counter() - geo_start) * 1000:.2f} ms")
+            TripTicketBranchLogsModel.objects.using(db_alias).create(
+                server_id=1,
+                trip_ticket_id=data['trip_ticket_id'],
+                branch_id=data['branch_id'],
+                time_in=timezone.now(),
+                created_by=data['created_by'],
+                created_date=timezone.now(),
+                updated_date=timezone.now(),
+                updated_by=data['created_by'],
+                location_in=location_in,
+                ip_address_in='RETIME IN',
+                latitude_in=data['latitude_in'],
+                longitude_in=data['longitude_in'],
+            )
+            #logger.warning(f"✅ Total request time: {(time.perf_counter() - start_time) * 1000:.2f} ms")
+            return Response ({"message": "insucc"}, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+ 
 class ReclockOutAttendance(APIView):
     permission_classes = [IsAuthenticated]
     def post (self, request):
@@ -1190,7 +1473,6 @@ class ReclockOutAttendance(APIView):
         db_alias = get_db_alias(request)
         
         try:
-           
             has_clocked_in = TripTicketBranchLogsModel.objects.using(db_alias).filter(
                 created_by=user_id,
                 #created_date__date=current_date,
@@ -1199,14 +1481,16 @@ class ReclockOutAttendance(APIView):
                 time_in__isnull=False,
                 time_out__isnull=True,
             ).first()
-        
-            trip_details = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id, branch_id=branch_id)
+            if db_alias == 'tsl_db':
+                trip_details = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id, entity_id=branch_id)
+            else:
+                trip_details = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id, branch_id=branch_id)
          
             for detail in trip_details:
                 if not OutslipImagesModel.objects.using(db_alias).filter(
                 trip_ticket_id= trip_ticket_id,
                 trip_ticket_detail_id=detail.trip_ticket_detail_id,
-                branch_id=detail.branch_id,
+                branch_id=branch_id,
                 ).first():
                     return Response(
                     {"error": f"Upload missing for outslip #{detail.ref_trans_no}"},
@@ -1232,6 +1516,8 @@ class ReclockOutAttendance(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
+
+
 class CancelOutslipView(APIView):
     permission_classes = [IsAuthenticated]
     def post (self, request):
@@ -1265,7 +1551,7 @@ class CancelOutslipView(APIView):
                     trans_code_id=item['trans_code_id'],
                     item_id=item['item_id'],
                     item_qty=0,
-                    doc_qty=item.get('doc_qty', item['item_qty']),
+                    doc_qty=float(item.get('doc_qty', item['item_qty'])), 
                     ref_trans_detail_id=item['ref_trans_detail_id'],
                     ref_trans_detail_pkg_id=item['ref_trans_detail_pkg_id'],
                     i_trans_no=item['i_trans_no'],
@@ -1285,105 +1571,170 @@ class CancelOutslipView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-class TripTicketReports(APIView):
+
+
+###WTPIRIS###
+class LayerCursorPagination(CursorPagination):
+    page_size = 25
+    ordering = 'full_code'
+
+class LayerMFView (APIView):
     permission_classes = [AllowAny]
-    
+    pagination_class = LayerCursorPagination
+
     def get(self, request):
         db_alias = get_db_alias(request)
-        trip_ticket_no = request.query_params.get('trip_ticket_no')
 
-        if not trip_ticket_no:
-            return Response ({"error": "Trip Ticket No. is required."}, status=400)
-        try:
-            if trip_ticket_no:
-                trip_ticket =TripTicketModel.objects.using(db_alias).filter(
-                    trip_ticket_no = trip_ticket_no).first
-                if not trip_ticket:
-                    return Response({"Error": "Trip ticket not found."}, status= 404)                
-                trip_ticket_id = trip_ticket.trip_ticket_id
-            
-            tripdetail_data = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id)
+        layers = LayerMFModel.objects.using(db_alias).all()
+        search_query = request.query_params.get('search', None)
+        if search_query:
+            layers = layers.filter(Q(full_code__icontains=search_query))
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(layers,request)
 
-            if not tripdetail_data.exists():
-                return Response({"error": "Trip ticket not found."}, status=404)
-        except ValueError:
-            return Response({"error": "Invalid ID Format."}, status=400)
+        layers_serializer = LayerMFSerializer(page, many=True)
         
-        tripdetail_serializer = TripDetailsSerializer(tripdetail_data, many=True)
-        return Response ({'tripdetails': tripdetail_serializer.data})
-class TripTicketBranchReports(APIView):
-    permission_classes = [AllowAny]
+        return paginator.get_paginated_response(layers_serializer.data)
     
-    def get(self, request):
+class SaveBarcode(APIView):
+    permission_classes = [AllowAny]
+
+    def post (self, request):
         db_alias = get_db_alias(request)
-        
-        trip_ticket_id = request.query_params.get('trip_ticket_id')
-        branch_id = request.query_params.get('branch_id')
-        
-        if not trip_ticket_id:
-            return Response({"error": "Trip Ticket ID is required."}, status=400)
+        layer_id = request.data.get('layer_id')
+        barcode = request.data.get('barcode')
+        created_by = request.data.get('created_by')
+        header_id = request.query_params.get('id')
+
+
+        itemMF = ItemMFModel.objects.using(db_alias).all().filter(barcode=barcode).first()
+        if not itemMF:
+            return Response({'error': 'Item does not exist'}, status=  400)
         try:
-            connection = connections[db_alias]
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                      SELECT 
-                        td.*,
-                        cast(null as bigint) as item_id,   cast(null as nvarchar(30)) as item_description,   cast(null as nvarchar(30)) as barcode,   cast(null as int) as uom_id,
-                        cast(null as nvarchar(30)) as uom_code,  cast(null as int) as item_qty
-                    FROM scm_tr_trip_ticket_detail td
-                    WHERE td.trip_ticket_id = %s AND td.branch_id = %s order by td.ref_trans_no asc
-                """, [trip_ticket_id, branch_id])
-                
-                columns = [col[0] for col in cursor.description]
-                raw_data = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            
-            if not raw_data:
-                return Response({"error": "Trip ticket not found."}, status=404)
-            
-            trips_map = {}
-            branches = set()
-            
-            for row in raw_data:                
-                trip_id = ['trip_ticket_detail_id']
-                
-                if trip_id not in trips_map:
-                    trips_map[trip_id] = {
-                        'trip_ticket_detail_id': trip_id,
-                        'trip_ticket_id': row['trip_ticket_id'],
-                        'branch_id': row['branch_id'],
-                        'ref_trans_id': row['ref_trans_id'],
-                        'ref_trans_no': row['ref_trans_no'],
-                        'ref_trans_date': row['ref_trans_date'],
-                        'trans_name': row['trans_name'],
-                        'detail_volume': row['detail_volume'],
-                        'remarks': row['remarks'],
-                        'items': [],
-                        'branch_name': row.get('branch_name'),
-                        'is_posted': row['is_posted'],
-                        'updated_date':row['updated_date'],
-                        'created_date':row['created_date'],
-                    }
-                    branches.add(row['branch_id'])
-                
-                existing_items = {i['item_id'] for i in trips_map[trip_id]['items']}
-                if row['item_id'] not in existing_items:
-                    trips_map[trip_id]['items'].append({
-                        'item_id': row['item_id'],
-                        'item_qty': str(row['item_qty']),
-                        'remarks': row['remarks'],
-                        'item_description': row['item_description'],
-                        'barcode': row['barcode'],
-                        'uom_id': row['uom_id'],
-                        'uom_code': row['uom_code'],
-                    })
-            branch_data = TripBranchModel.objects.using(db_alias).filter(
-                branch_id__in=branches
+            if not header_id:
+                new_header = InventoryCountRowManagerModel.objects.using(db_alias).create(
+                    server_id=1,
+                    mf_status_id=4,
+                    created_by=1219,
+                    created_date=timezone.now(),
+                    updated_by=1219,
+                    updated_date=timezone.now()
+                )
+                header_id = new_header.header_id
+            ItemFullCountScanModel.objects.using(db_alias).create(
+                server_id=1,
+                layer_id=layer_id,
+                item_id = itemMF.item_id,
+                header_id = header_id,
+                barcode = barcode,
+                created_by = created_by,
+                created_date = timezone.now(),
+                updated_by = created_by,
+                updated_date = timezone.now()
             )
-            branch_serializer  = TripBranchSerializer(branch_data, many=True)
-            return Response({
-                'tripdetails': list(trips_map.values()),
-                'branches': branch_serializer.data
-            })
-            
-        except ValueError:
-            return Response({"error": "Invalid ID format."}, status=400)
+            return Response({"message":"barbar"}, status=status.HTTP_201_CREATED)
+        except Exception as e:
+                return Response(
+                    logger.error(f"Failed to save barcode: {str(e)}"),
+                    {'error': f'Failed to save barcode: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+class FullCountBarcodeView(APIView):
+    permission_classes = [AllowAny]
+
+    def get (self,request):
+        db_alias = get_db_alias(request)
+        header_id = request.query_params.get('id')
+        barcode = ItemFullCountScanModel.objects.using(db_alias).all().order_by('-tmp_fullcount_id').filter(header_id=header_id)
+        items = ItemMFModel.objects.using(db_alias).all()
+        layers = LayerMFModel.objects.using(db_alias).all()
+        layer_mapping = {layer.layer_id: layer.full_code for layer in layers}
+        item_mapping = {item.item_id: item.item_description for item in items}
+        barcode_serializer = ItemFullCountScanSerializer(barcode, many=True)
+        for fc in barcode_serializer.data:
+            fc['item_description'] = item_mapping.get(fc['item_id'], '')
+            fc['full_code'] = layer_mapping.get(fc['layer_id'], '')
+
+        return Response({'barcodeItem': barcode_serializer.data})
+    
+class InventoryCountListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get (self,request):
+        db_alias = get_db_alias(request)
+        header = InventoryCountRowManagerModel.objects.using(db_alias).all().order_by('-created_date')
+        header_serializer = InventoryCountRowManagerSerializer(header, many=True)
+        return Response(header_serializer.data)
+
+class FullCountSerialView(APIView):
+    permission_classes = [AllowAny]
+
+    def get (self,request):
+        db_alias = get_db_alias(request)
+        tmp_fullcount_id = request.query_params.get('id')
+        serbat = SerialFullCountScanModel.objects.using(db_alias).all().order_by('-created_date').filter(tmp_fullcount_id=tmp_fullcount_id)
+        serbat_serializer = SerialFullCountScanSerializer(serbat, many=True)
+        return Response({'serbatItem': serbat_serializer.data})
+
+class SelectedItemCodeView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        db_alias = get_db_alias(request)
+        tmpID = request.query_params.get('id')
+        selectedTmpID = ItemFullCountScanModel.objects.using(db_alias).filter(tmp_fullcount_id=tmpID).first()
+        items = ItemMFModel.objects.using(db_alias).all()
+        layers = LayerMFModel.objects.using(db_alias).all()
+        layer_mapping = {layer.layer_id: layer.full_code for layer in layers}
+        item_mapping = {item.item_id: item.item_description for item in items}
+        tmpID_serializer = ItemFullCountScanSerializer(selectedTmpID)
+        response_data = tmpID_serializer.data
+
+        response_data['item_description'] = item_mapping.get(response_data['item_id'], '')
+        response_data['full_code'] = layer_mapping.get(response_data['layer_id'], '')
+
+
+        return Response({'selectedItemCode': [response_data]})
+
+class SaveSerbat(APIView):
+    permission_classes = [AllowAny]
+
+    def post (self, request):
+        db_alias = get_db_alias(request)
+        serial = request.data.get('serial')
+        batch = request.data.get('batch')
+        created_by = request.data.get('created_by')
+        tmp_fullcount_id = request.query_params.get('id')
+
+        try:
+            if tmp_fullcount_id:
+                item_code = ItemFullCountScanModel.objects.using(db_alias).filter(tmp_fullcount_id=tmp_fullcount_id).first()
+            if not item_code:
+                return Response({'error': 'Item not found'}, status=  400)
+
+            SerialFullCountScanModel.objects.using(db_alias).create(
+                server_id=1,
+                tmp_fullcount_id=tmp_fullcount_id,
+                item_id = item_code.item_id,
+                header_id = item_code.header_id,
+                layer_id = item_code.layer_id,
+                item_code = item_code.barcode,
+                serial_code = serial,
+                batch_no = batch,
+                created_by = created_by,
+                created_date = timezone.now(),
+                updated_by = created_by,
+                updated_date = timezone.now()
+            )
+            item_code.item_qty = (item_code.item_qty or 0) + 1
+            item_code.updated_by = 1219
+            item_code.updated_date = timezone.now()
+            item_code.save(using=db_alias)
+            return Response({"message":"serbatbat"}, status=status.HTTP_201_CREATED)
+        except Exception as e:
+                return Response(
+                    logger.error(f"Failed to save serbat: {str(e)}"),
+                    {'error': f'Failed to save serbat: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+    
