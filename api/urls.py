@@ -44,6 +44,10 @@ urlpatterns = [
     path('inventorycount_row/', InventoryCountListView.as_view(), name='inventoryrow'),
     path('save_barcode/', SaveBarcode.as_view(), name='savebarcode'),
     path('save_serbat/', SaveSerbat.as_view(), name='savebarcode'),
+    path('delete_barcode/', DeleteBarcode.as_view(), name='deletebarcode'),
+    path('delete_serbat/', DeleteSerbat.as_view(), name='deleteserbat'),
+
+    path('edit_barcode_qty/', EditBarcodeQty.as_view(), name='editqty'),
     path('barcode_list/', FullCountBarcodeView.as_view(), name='barcodelist'),
     path('serbat_list/', FullCountSerialView.as_view(), name='serbatlist'),
     path('selected_itemcode/', SelectedItemCodeView.as_view(), name='selecteditemcode'),

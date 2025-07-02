@@ -261,6 +261,8 @@ class TripTicketDetailReceivingModel(models.Model):
 class InventoryCountRowManagerModel(models.Model):
     server_id = models.BigIntegerField(default=1)
     header_id = models.AutoField(primary_key=True)
+    company_id = models.BigIntegerField(default=3)
+    header_no = models.BigIntegerField()
     mf_status_id = models.SmallIntegerField()
     created_by = models.BigIntegerField()
     created_date = models.DateTimeField()
@@ -305,6 +307,7 @@ class SerialFullCountScanModel(models.Model):
     header_id = models.BigIntegerField()
     layer_id = models.BigIntegerField()
     item_id = models.BigIntegerField()
+    quantity = models.BigIntegerField()
     item_code = models.CharField(max_length=255, null=True)
     serial_code = models.CharField(max_length=255, null=True)
     batch_no = models.CharField(max_length=255, null=True)

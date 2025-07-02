@@ -6,7 +6,6 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.pagination import CursorPagination
 from django.contrib.auth import authenticate
-
 from api.passwordAuth import MultiDBJWTAuthentication
 from .serializers import *
 from django.core.files.storage import default_storage
@@ -27,7 +26,7 @@ from collections import defaultdict
 import json
 import time
 from django.db import connections
-from django.db.models import Q
+from django.db.models import Q, Sum, Max
 #pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 logger = logging.getLogger(__name__)
 def get_db_alias(request):
@@ -1603,21 +1602,23 @@ class SaveBarcode(APIView):
         db_alias = get_db_alias(request)
         layer_id = request.data.get('layer_id')
         barcode = request.data.get('barcode')
-        created_by = request.data.get('created_by')
+        user_id = request.data.get('created_by')
         header_id = request.query_params.get('id')
-
 
         itemMF = ItemMFModel.objects.using(db_alias).all().filter(barcode=barcode).first()
         if not itemMF:
             return Response({'error': 'Item does not exist'}, status=  400)
         try:
             if not header_id:
+                max_header = InventoryCountRowManagerModel.objects.using(db_alias).aggregate(Max('header_no'))['header_no__max'] or 0
                 new_header = InventoryCountRowManagerModel.objects.using(db_alias).create(
                     server_id=1,
+                    header_no = max_header + 1,
+                    company_id = 3,
                     mf_status_id=4,
-                    created_by=1219,
+                    created_by=user_id,
                     created_date=timezone.now(),
-                    updated_by=1219,
+                    updated_by=user_id,
                     updated_date=timezone.now()
                 )
                 header_id = new_header.header_id
@@ -1627,9 +1628,10 @@ class SaveBarcode(APIView):
                 item_id = itemMF.item_id,
                 header_id = header_id,
                 barcode = barcode,
-                created_by = created_by,
+                item_qty= 1,
+                created_by = user_id,
                 created_date = timezone.now(),
-                updated_by = created_by,
+                updated_by = user_id,
                 updated_date = timezone.now()
             )
             return Response({"message":"barbar"}, status=status.HTTP_201_CREATED)
@@ -1639,6 +1641,63 @@ class SaveBarcode(APIView):
                     {'error': f'Failed to save barcode: {str(e)}'},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
+        
+class DeleteBarcode(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self,request):
+        db_alias = get_db_alias(request)
+        tmp_fullcount_id = request.data.get('tmp_fullcount_id')
+        try:
+            item_fullcount = ItemFullCountScanModel.objects.using(db_alias).filter(tmp_fullcount_id = tmp_fullcount_id).first()
+            serial_fullcount = SerialFullCountScanModel.objects.using(db_alias).all().filter(tmp_fullcount_id = tmp_fullcount_id)
+            if not item_fullcount:
+                return Response({'error': 'Item does not exist'}, status=  400)
+          
+            item_fullcount.delete()
+            serial_fullcount.delete()
+            return Response ({"message": "dede"}, status = status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                logger.error(f"Failed to delete: {str(e)}"),
+                {'error': f'Failed to delete barcode: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+class DeleteSerbat(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self,request):
+        db_alias = get_db_alias(request)
+        serial_fullcount_id = request.data.get('serial_fullcount_id')
+        user_id = request.data.get('created_by')
+        try:
+            item_code = SerialFullCountScanModel.objects.using(db_alias).filter(serial_fullcount_id=serial_fullcount_id).first()
+            barcode = ItemFullCountScanModel.objects.using(db_alias).filter(tmp_fullcount_id = item_code.tmp_fullcount_id).first()
+
+            if not item_code:
+                return Response({'error': 'Serial does not exist'}, status=  400)
+           
+            item_code.delete()
+            total_quantity = SerialFullCountScanModel.objects.using(db_alias).filter(
+                tmp_fullcount_id=item_code.tmp_fullcount_id
+            ).aggregate(
+                total_quantity=Sum('quantity')
+            )['total_quantity'] or 0
+
+            barcode.item_qty = total_quantity
+            barcode.updated_by = user_id
+            barcode.updated_date = timezone.now()
+            barcode.save(using=db_alias)
+            return Response ({"message": "dede"}, status = status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                logger.error(f"Failed to delete: {str(e)}"),
+                {'error': f'Failed to delete barcode: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        
 class FullCountBarcodeView(APIView):
     permission_classes = [AllowAny]
 
@@ -1663,7 +1722,13 @@ class InventoryCountListView(APIView):
     def get (self,request):
         db_alias = get_db_alias(request)
         header = InventoryCountRowManagerModel.objects.using(db_alias).all().order_by('-created_date')
+        users = User.objects.using(db_alias).all()
+
+        user_mapping = {user.user_id: user.user_name for user in users}
         header_serializer = InventoryCountRowManagerSerializer(header, many=True)
+
+        for user in header_serializer.data:
+            user['user_name'] = user_mapping.get(user['created_by'], '')
         return Response(header_serializer.data)
 
 class FullCountSerialView(APIView):
@@ -1703,7 +1768,8 @@ class SaveSerbat(APIView):
         db_alias = get_db_alias(request)
         serial = request.data.get('serial')
         batch = request.data.get('batch')
-        created_by = request.data.get('created_by')
+        user_id = request.data.get('created_by')
+        quantity = request.data.get('quantity', 1)
         tmp_fullcount_id = request.query_params.get('id')
 
         try:
@@ -1721,20 +1787,62 @@ class SaveSerbat(APIView):
                 item_code = item_code.barcode,
                 serial_code = serial,
                 batch_no = batch,
-                created_by = created_by,
+                quantity = quantity,
+                created_by = user_id,
                 created_date = timezone.now(),
-                updated_by = created_by,
+                updated_by = user_id,
                 updated_date = timezone.now()
             )
-            item_code.item_qty = (item_code.item_qty or 0) + 1
-            item_code.updated_by = 1219
+            total_quantity = SerialFullCountScanModel.objects.using(db_alias).filter(
+                tmp_fullcount_id=tmp_fullcount_id
+            ).aggregate(
+                total_quantity=Sum('quantity')
+            )['total_quantity'] or 0
+
+            # Update the item quantity
+            item_code.item_qty = total_quantity
+            item_code.updated_by = user_id
             item_code.updated_date = timezone.now()
             item_code.save(using=db_alias)
             return Response({"message":"serbatbat"}, status=status.HTTP_201_CREATED)
         except Exception as e:
                 return Response(
-                    logger.error(f"Failed to save serbat: {str(e)}"),
+                    logger.error(f"Fail4ed to save serbat: {str(e)}"),
                     {'error': f'Failed to save serbat: {str(e)}'},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-    
+class EditBarcodeQty(APIView):
+    permission_classes = [AllowAny]
+
+    def post (self, request):
+        db_alias = get_db_alias(request)
+        quantity = request.data.get('quantity')
+        serial_fullcount_id = request.data.get('serial_fullcount_id')
+        user_id = request.data.get('created_by')
+
+        try:
+            if serial_fullcount_id:
+                item_code = SerialFullCountScanModel.objects.using(db_alias).filter(serial_fullcount_id=serial_fullcount_id).first()
+                barcode = ItemFullCountScanModel.objects.using(db_alias).filter(tmp_fullcount_id=item_code.tmp_fullcount_id).first()
+
+            # Update the item quantity
+            item_code.quantity = quantity
+            item_code.updated_by = user_id
+            item_code.updated_date = timezone.now()
+            item_code.save(using=db_alias)
+            total_quantity = SerialFullCountScanModel.objects.using(db_alias).filter(
+                tmp_fullcount_id=item_code.tmp_fullcount_id
+            ).aggregate(
+                total_quantity=Sum('quantity')
+            )['total_quantity'] or 0
+            barcode.item_qty = total_quantity
+            barcode.updated_by = user_id
+            barcode.updated_date = timezone.now()
+            barcode.save(using=db_alias)
+            return Response({"message":"eded"}, status=status.HTTP_201_CREATED)
+        except Exception as e:
+                return Response(
+                    logger.error(f"Fail4ed to save serbat: {str(e)}"),
+                    {'error': f'Failed to save serbat: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
