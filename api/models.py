@@ -74,6 +74,8 @@ class TripDetailsModel(models.Model):
     detail_volume = models.DecimalField(max_digits=18, decimal_places=6)
     is_posted = models.BooleanField()
     is_delivered = models.BooleanField()
+    received_by = models.CharField(max_length=255)
+    cancel_reason = models.CharField(max_length=255)
     updated_date = models.DateTimeField()
     created_date = models.DateTimeField()
     
@@ -263,7 +265,7 @@ class InventoryCountRowManagerModel(models.Model):
     header_id = models.AutoField(primary_key=True)
     company_id = models.BigIntegerField(default=3)
     header_no = models.BigIntegerField()
-    mf_status_id = models.SmallIntegerField()
+    status_id = models.SmallIntegerField()
     created_by = models.BigIntegerField()
     created_date = models.DateTimeField()
     updated_by = models.BigIntegerField()
@@ -320,3 +322,12 @@ class SerialFullCountScanModel(models.Model):
     class Meta:
         db_table = 'scm_ir_serial_fullcount_scan'
         managed = False
+
+class MatrixStatusModel(models.Model):
+    matrix_status_id = models.AutoField(primary_key=True)
+    matrix_status_code = models.SmallIntegerField()
+
+    class Meta:
+        db_table = 'sys_matrix_status'
+        managed = False
+        

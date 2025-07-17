@@ -104,27 +104,27 @@ class TripBranchView(APIView):
             
             if not tripdetail_data.exists():
                 return Response({"error": "Trip ticket not found."}, status=404)
-        except ValueError:
-            return Response({"error": "Invalid ID format."}, status=400)
         
-        tripdetail_serializer = TripDetailsSerializer(tripdetail_data, many=True)
-        tripdetails = tripdetail_serializer.data
+        
+            tripdetail_serializer = TripDetailsSerializer(tripdetail_data, many=True)
+            tripdetails = tripdetail_serializer.data
 
-        branch_ids = list(set([detail['branch_id'] for detail in tripdetails])) #convert to list and remove duplicates of branch id
+            branch_ids = list(set([detail['branch_id'] for detail in tripdetails])) #convert to list and remove duplicates of branch id
 
-        branch_data = TripBranchModel.objects.using(db_alias).order_by('branch_name').filter(branch_id__in=branch_ids) # match
-        branch_serializer = TripBranchSerializer(branch_data, many=True)
+            branch_data = TripBranchModel.objects.using(db_alias).order_by('branch_name').filter(branch_id__in=branch_ids) # match
+            branch_serializer = TripBranchSerializer(branch_data, many=True)
 
 
-        response_data = [ 
-            { 
-            'branch_id': branch['branch_id'], 
-            'branch_name': branch['branch_name'] 
-            } 
-            for branch in branch_serializer.data 
-        ]
-        return Response(response_data)
-
+            response_data = [ 
+                { 
+                'branch_id': branch['branch_id'], 
+                'branch_name': branch['branch_name'] 
+                } 
+                for branch in branch_serializer.data 
+            ]
+            return Response(response_data)
+        except Exception as e:
+            return Response({'error':str(e)})
 
 class TripDetailView(APIView):
     permission_classes = [AllowAny]
@@ -267,7 +267,7 @@ class ManageTripDetailView(APIView):
                 trip_ticket_detail_id__in=trip_detail_ids
             )
         else:
-            trip_details_qs = TripDetailsModel.objects.using(db_alias).order_by('entity_name', 'ref_trans_no').filter(
+            trip_details_qs = TripDetailsModel.objects.using(db_alias).order_by('-trip_ticket_id', 'ref_trans_no').filter(
                 trip_ticket_id__in=trip_ids,
                 trip_ticket_detail_id__in=trip_detail_ids
             )
@@ -548,7 +548,27 @@ class ManageUploadedPictures(APIView):
             })
         except ValueError:
             return Response({"error": "Invalid ID format."}, status=400)
-
+        
+class ManageUploadedCancel(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        db_alias = get_db_alias(request)
+        
+        trip_ticket_detail_id = request.query_params.get('id')
+        if trip_ticket_detail_id:
+            try:
+                cancel_data = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_detail_id=trip_ticket_detail_id).first()
+                if not cancel_data:
+                    return Response({"error": "Trip Ticket Detail not found."}, status=404)
+                cancel_data_serializer = TripDetailsSerializer(cancel_data)
+                
+                return Response(cancel_data_serializer.data)
+            except ValueError:
+                return Response({"error": "Invalid ID Format."}, status=400)
+            except Exception as e:
+                return Response({'error':str(e)})
+            
 class OutslipDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -693,6 +713,7 @@ class UploadOutslipView(APIView):
         if db_alias == 'tsl_db':
             received_by = request.data.get('received_by')
             is_delivered_str = request.data.get('is_delivered')
+            cancel_reason = request.data.get('cancel_reason')
             is_delivered = is_delivered_str.lower() == 'true' if isinstance(is_delivered_str, str) else bool(is_delivered_str)
         
 
@@ -723,17 +744,11 @@ class UploadOutslipView(APIView):
                     with Image.open(upload_image) as img:
 
                         if has_clock_in:
-                            location_data = {
-                            'latitude_in': has_clock_in.latitude_in,
-                            'longitude_in': has_clock_in.longitude_in,
-                            'location_in': has_clock_in.location_in,
-                            'created_by': has_clock_in.created_by,
-                            'created_date': has_clock_in.created_date,
-                            }
-                            #logger.warning(f"Raw location data: {location_data}")
-                            coords = f"{has_clock_in.latitude_in},{has_clock_in.longitude_in}"
-                            address = has_clock_in.location_in
-                            watermarkedtext = f"Trip Ticket No:{trip_ticket_no}\nBranch Name: {branch_name}\nTransacstion Name: {trans_name}\nTrans No: {ref_trans_no}\nTaken by: {username}\nDate Taken: {timezone.now()}\nAddress: {has_clock_in.location_in}\nRemarks: {upload_remarks}"
+                            if db_alias == 'tsl_db':
+                                watermarkedtext = f"Trip Ticket No:{trip_ticket_no}\nCustoner Name: {branch_name}\nReceived by: {received_by}\nTransaction Name: {trans_name}\nTrans No: {ref_trans_no}\nTaken by: {username}\nDate Taken: {timezone.now()}\nAddress: {has_clock_in.location_in}\nRemarks: {upload_remarks}"
+                            else:
+                                watermarkedtext = f"Trip Ticket No:{trip_ticket_no}\nBranch Name: {branch_name}\nTransaction Name: {trans_name}\nTrans No: {ref_trans_no}\nTaken by: {username}\nDate Taken: {timezone.now()}\nAddress: {has_clock_in.location_in}\nRemarks: {upload_remarks}"
+                                
                             #logger.warning(f"Raw location data:{has_clock_in.created_by} {coords} {address}")
                             draw = ImageDraw.Draw(img)
                             font = ImageFont.load_default(size=64)
@@ -771,7 +786,7 @@ class UploadOutslipView(APIView):
                         logger.warning(f"dede {is_delivered}")
                         trip_details.is_delivered = is_delivered
                         if is_delivered == False:
-                            trip_details.received_by = 'No Receiver/Cancelled'
+                            trip_details.cancel_reason = cancel_reason
                         else:
                             trip_details.received_by = received_by
                         trip_details.received_date = timezone.now()
@@ -789,18 +804,41 @@ class UploadOutslipView(APIView):
             }, status=status.HTTP_201_CREATED)
         return Response({'error': 'All images failed to upload', 'details': errors}, status=status.HTTP_400_BAD_REQUEST)
 def reverse_geocode(lat, lon):
-        url = "https://us1.locationiq.com/v1/reverse"
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
         params = {
-            'key' : 'pk.290fe86c4236d073d5c6996361d7d23d',
-            'lat': lat,
-            'lon': lon,
-            'format': 'json'
+            'key' : 'AIzaSyD6Xy1OC3vPJnVw4mGrxzjC3kKfKppV7es',
+            'latlng': f"{lat},{lon}",
+            'result_type': 'street_address|route|locality|neighborhood|premise|country'
         }
-        
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error during API reqeust: {e}")
+            return None;
+ 
+class ReceiverCursorPagination(CursorPagination):
+    page_size = 25
+    ordering = 'entity_name'    
+class ReceiverMFView (APIView): #RETAIL
+    permission_classes = [AllowAny]
+    pagination_class = ReceiverCursorPagination
     
+    def get(self, request):
+        db_alias = get_db_alias(request)
+        try:
+            receivers = TripCustomerModel.objects.using(db_alias).all()
+            search_query = request.query_params.get('search', None)
+            if search_query:
+                receivers = receivers.filter(Q(entity_name__icontains=search_query))
+            paginator = self.pagination_class()
+            page = paginator.paginate_queryset(receivers,request)
+            
+            receivers_serializer = CustomerMFSerializer(page, many=True)
+            return paginator.get_paginated_response(receivers_serializer.data)
+        except Exception as e:
+            return Response({'error':str(e)})
 
 
 class CheckClockInView(APIView):
@@ -953,7 +991,8 @@ class ClockInAttendance(APIView):
                 )
             geo_start = time.perf_counter()
             location_data = reverse_geocode(data['latitude_in'], data['longitude_in'])
-            location_in = location_data.get('display_name')
+            #logger.warning(location_data['results'])
+            location_in = location_data['results'][1].get('formatted_address')
             #logger.warning(f"🌍 Reverse geocode time: {(time.perf_counter() - geo_start) * 1000:.2f} ms")
             TripTicketBranchLogsModel.objects.using(db_alias).create(
                 server_id=1,
@@ -1102,7 +1141,7 @@ class ClockOutAttendance(APIView):
             latitude = data.get('latitude_out')
             longitude = data.get('longitude_out')
             location_data = reverse_geocode(data['latitude_out'], data['longitude_out'])
-            location_out = location_data.get('display_name')
+            location_out = location_data['results'][1].get('formatted_address')
             #logger.warning(f"🌍 Reverse geocode time: {(time.perf_counter() - geo_start) * 1000:.2f} ms")
             has_clocked_in.time_out = timezone.now()
             has_clocked_in.updated_by = user_id
@@ -1117,7 +1156,7 @@ class ClockOutAttendance(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
-
+###WTP DMSR#########
 class TripTicketReports(APIView):
     permission_classes = [AllowAny]
     
@@ -1151,11 +1190,10 @@ class TripTicketReports(APIView):
             )
             driver_mapping = {driver.entity_id: driver.entity_name for driver in drivers}
             lastBranchRecord = TripTicketBranchLogsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id).order_by('-created_date').first()
-            branch_name = None
             if lastBranchRecord:
                 branch = TripBranchModel.objects.using(db_alias).filter(branch_id=lastBranchRecord.branch_id).first()
-                branch_name = branch.branch_name if branch else None
-                
+                last_branch_name = branch.branch_name if branch else None
+            
             tripdetail_serializer = TripDetailsSerializer(tripdetail_data, many=True)
             tripData = []
             for detail in tripdetail_serializer.data:
@@ -1165,18 +1203,19 @@ class TripTicketReports(APIView):
                     'asst_entity_name': driver_mapping.get(trip_ticket.asst_entity_id, ''),
                     'dispatcher': driver_mapping.get(trip_ticket.dispatched_by, ''),
                     'plate_no': trip_ticket.plate_no,
-                    'last_branch': branch_name,
+                    'last_branch': last_branch_name if lastBranchRecord else None,
                     'last_branch_time' : lastBranchRecord.updated_date if lastBranchRecord else None,
                     'encoded_date': trip_ticket.updated_date,
-                    'lat': lastBranchRecord.latitude_in,
-                    'long': lastBranchRecord.longitude_in,
+                    'lat': lastBranchRecord.latitude_in if lastBranchRecord else None,
+                    'long': lastBranchRecord.longitude_in if lastBranchRecord else None,
+                    'trip_ticket_no': trip_ticket.trip_ticket_no,
 
                 })
                 tripData.append(trip_detail)
             if not tripdetail_data.exists():
                 return Response({"error": "Trip ticket not found."}, status=404)
-        except ValueError:
-            return Response({"error": "Invalid ID Format."}, status=400)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
         return Response ({'tripdetails': tripData})
     
@@ -1214,9 +1253,9 @@ class BranchReportsView(APIView):
         response_data = [ 
             { 
             'branch_id': branch['branch_id'], 
-            'branch_name': branch['branch_name'] 
+            'branch_name': branch['branch_name']
             } 
-            for branch in branch_serializer.data 
+            for branch in branch_serializer.data
         ]
         return Response(response_data)
 
@@ -1226,15 +1265,13 @@ class TripTicketDetailReports(APIView):
     def get(self, request):
         db_alias = get_db_alias(request)
         
-        trip_ticket_no = request.query_params.get('trip_ticket_no')
+        trip_ticket_id = request.query_params.get('trip_ticket_id')
         branch_id = request.query_params.get('branch_id')
         
-        if not trip_ticket_no:
+        if not trip_ticket_id:
             return Response({"error": "Trip Ticket No. is required."}, status=400)
         try:
-            trip_ticket =TripTicketModel.objects.using(db_alias).filter(
-            trip_ticket_no = trip_ticket_no).first()
-            tripdetail_data = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket.trip_ticket_id, branch_id=branch_id)
+            tripdetail_data = TripDetailsModel.objects.using(db_alias).filter(trip_ticket_id=trip_ticket_id, branch_id=branch_id)
             
             if not tripdetail_data.exists():
                 return Response({"error": "Trip ticket not found."}, status=404)
@@ -1245,7 +1282,7 @@ class TripTicketDetailReports(APIView):
         tripdetails = tripdetail_serializer.data
 
         return Response(tripdetails)
-
+    
 class AttendanceReports(APIView):
     permission_classes = [AllowAny]
 
@@ -1304,7 +1341,10 @@ class InitialReports(APIView):
                     'last_branch_time': latest_log.updated_date if latest_log else None,
                     'encoded_date': initial_trip.updated_date,
                     'lat': latest_log.latitude_in,
-                    'long': latest_log.longitude_in
+                    'long': latest_log.longitude_in,
+                    'last_branch_id': latest_log.branch_id,
+                    'last_time_in': latest_log.time_in,
+                    'last_time_out': latest_log.time_out,
                 })
                 tripData.append(trip_ticket)
         except ValueError:
@@ -1606,26 +1646,32 @@ class SaveBarcode(APIView):
         header_id = request.query_params.get('id')
 
         itemMF = ItemMFModel.objects.using(db_alias).all().filter(barcode=barcode).first()
-        if not itemMF:
-            return Response({'error': 'Item does not exist'}, status=  400)
         try:
+            
             if not header_id:
                 max_header = InventoryCountRowManagerModel.objects.using(db_alias).aggregate(Max('header_no'))['header_no__max'] or 0
                 new_header = InventoryCountRowManagerModel.objects.using(db_alias).create(
                     server_id=1,
                     header_no = max_header + 1,
                     company_id = 3,
-                    mf_status_id=4,
+                    status_id=1,
                     created_by=user_id,
                     created_date=timezone.now(),
                     updated_by=user_id,
                     updated_date=timezone.now()
                 )
                 header_id = new_header.header_id
+            else:
+                statusCode = InventoryCountRowManagerModel.objects.using(db_alias).filter(header_id=header_id).values_list('status_id', flat=True).first()
+                if statusCode is not None and statusCode != 1:
+                    return Response(
+                        {'error': 'You can no longer modify this transaction'}, 
+                        status=400
+                    )
             ItemFullCountScanModel.objects.using(db_alias).create(
                 server_id=1,
                 layer_id=layer_id,
-                item_id = itemMF.item_id,
+                item_id = itemMF.item_id if hasattr(itemMF, 'item_id') else 0,
                 header_id = header_id,
                 barcode = barcode,
                 item_qty= 1,
@@ -1651,8 +1697,10 @@ class DeleteBarcode(APIView):
         try:
             item_fullcount = ItemFullCountScanModel.objects.using(db_alias).filter(tmp_fullcount_id = tmp_fullcount_id).first()
             serial_fullcount = SerialFullCountScanModel.objects.using(db_alias).all().filter(tmp_fullcount_id = tmp_fullcount_id)
-            if not item_fullcount:
-                return Response({'error': 'Item does not exist'}, status=  400)
+            statusCode = InventoryCountRowManagerModel.objects.using(db_alias).filter(header_id=item_fullcount.header_id).values_list('status_id', flat=True).first()
+            
+            if statusCode != 1:
+                 return Response({'error': 'You can no longer modify this transaction'}, status=  400)
           
             item_fullcount.delete()
             serial_fullcount.delete()
@@ -1674,9 +1722,10 @@ class DeleteSerbat(APIView):
         try:
             item_code = SerialFullCountScanModel.objects.using(db_alias).filter(serial_fullcount_id=serial_fullcount_id).first()
             barcode = ItemFullCountScanModel.objects.using(db_alias).filter(tmp_fullcount_id = item_code.tmp_fullcount_id).first()
-
-            if not item_code:
-                return Response({'error': 'Serial does not exist'}, status=  400)
+            statusCode = InventoryCountRowManagerModel.objects.using(db_alias).filter(header_id=barcode.header_id).values_list('status_id', flat=True).first()
+            
+            if statusCode != 1:
+                 return Response({'error': 'You can no longer modify this transaction'}, status=  400)
            
             item_code.delete()
             total_quantity = SerialFullCountScanModel.objects.using(db_alias).filter(
@@ -1723,12 +1772,15 @@ class InventoryCountListView(APIView):
         db_alias = get_db_alias(request)
         header = InventoryCountRowManagerModel.objects.using(db_alias).all().order_by('-created_date')
         users = User.objects.using(db_alias).all()
-
+        matrix_statuses = MatrixStatusModel.objects.using(db_alias).all()
         user_mapping = {user.user_id: user.user_name for user in users}
+        status_mapping = {status.matrix_status_id: status.matrix_status_code for status in matrix_statuses}
         header_serializer = InventoryCountRowManagerSerializer(header, many=True)
 
         for user in header_serializer.data:
             user['user_name'] = user_mapping.get(user['created_by'], '')
+            user['status_code'] = status_mapping.get(user['status_id'], '')
+        logger.warning(header_serializer.data)
         return Response(header_serializer.data)
 
 class FullCountSerialView(APIView):
@@ -1775,9 +1827,10 @@ class SaveSerbat(APIView):
         try:
             if tmp_fullcount_id:
                 item_code = ItemFullCountScanModel.objects.using(db_alias).filter(tmp_fullcount_id=tmp_fullcount_id).first()
-            if not item_code:
-                return Response({'error': 'Item not found'}, status=  400)
-
+            statusCode = InventoryCountRowManagerModel.objects.using(db_alias).filter(header_id=item_code.header_id).values_list('status_id', flat=True).first()
+            
+            if statusCode != 1:
+                return Response({'error': 'You can no longer modify this transaction'}, status=  400)
             SerialFullCountScanModel.objects.using(db_alias).create(
                 server_id=1,
                 tmp_fullcount_id=tmp_fullcount_id,
@@ -1824,7 +1877,10 @@ class EditBarcodeQty(APIView):
             if serial_fullcount_id:
                 item_code = SerialFullCountScanModel.objects.using(db_alias).filter(serial_fullcount_id=serial_fullcount_id).first()
                 barcode = ItemFullCountScanModel.objects.using(db_alias).filter(tmp_fullcount_id=item_code.tmp_fullcount_id).first()
-
+                statusCode = InventoryCountRowManagerModel.objects.using(db_alias).filter(header_id=barcode.header_id).values_list('status_id', flat=True).first()
+                
+            if statusCode != 1:
+                 return Response({'error': 'You can no longer modify this transaction'}, status=  400)
             # Update the item quantity
             item_code.quantity = quantity
             item_code.updated_by = user_id
