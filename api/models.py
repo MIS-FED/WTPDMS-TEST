@@ -74,11 +74,11 @@ class TripDetailsModel(models.Model):
     detail_volume = models.DecimalField(max_digits=18, decimal_places=6)
     is_posted = models.BooleanField()
     is_delivered = models.BooleanField()
-    received_by = models.CharField(max_length=255)
     cancel_reason = models.CharField(max_length=255)
     updated_date = models.DateTimeField()
     created_date = models.DateTimeField()
-    
+    received_by = models.CharField(max_length=255)
+    cancel_reason = models.CharField(max_length=255)
     class Meta:
         db_table = 'scm_tr_trip_ticket_detail'
         managed = False
@@ -326,8 +326,44 @@ class SerialFullCountScanModel(models.Model):
 class MatrixStatusModel(models.Model):
     matrix_status_id = models.AutoField(primary_key=True)
     matrix_status_code = models.SmallIntegerField()
-
     class Meta:
         db_table = 'sys_matrix_status'
         managed = False
+
+class AuthorizedReceiverModel(models.Model):
+    branch_receiver_id = models.AutoField(primary_key=True)
+    branch_id = models.BigIntegerField()
+    entity_id = models.BigIntegerField()
+    entity_name = models.CharField(max_length=255)
+    
+    class Meta:
+        db_table = 'fin_mf_branch_receiver'
+        managed = False    
         
+        
+###DMSR
+class BranchOtherDetailsModel(models.Model):
+    branch_id = models.BigIntegerField(primary_key=True)
+    branch_name = models.CharField(max_length=255)
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+    
+    class Meta:
+        db_table ="fin_mf_branch_other_details"
+        managed = False
+    
+class DeliverySequenceViewModel(models.Model):
+    trip_ticket_id = models.BigIntegerField(primary_key=True)
+    trip_ticket_no = models.BigIntegerField()
+    branch_code = models.CharField(max_length=255)
+    branch_id = models.BigIntegerField()
+    branch_name = models.CharField(max_length=255)
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+    seq = models.BigIntegerField()
+    del_status = models.CharField(max_length=255)
+    
+    class Meta:
+        db_table="vw_scm_tr_trip_ticket_detail_delivery_sequence"
+        managed = False
+    

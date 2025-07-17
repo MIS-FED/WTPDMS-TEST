@@ -40,16 +40,17 @@ urlpatterns = [
 
 
     ################DMS-REPORTS########################
+    path('triplistreport/', TripListReport.as_view(), name='triplist'),
     path('trip_ticket_reports/', TripTicketReports.as_view(), name='tripticketreports'),
+    path('attendancelistreport/', AttendanceListReport.as_view(), name='attendancelistreport'),
     path('trip_ticket_detail_reports/', TripTicketDetailReports.as_view(), name='tripticketbranchreports'),
     path('branch_reports/', BranchReportsView.as_view(), name='branchreports'),
     path('attendance_reports/', AttendanceReports.as_view(), name='attendancereports'),
     path('initial_reports/', InitialReports.as_view(), name='initialreports'),
+    path('view_outslip_report/', ViewOutslipReport.as_view(), name='viewoutslkipreport'),
+    path('delivery_sequence/', DeliverySequenceView.as_view(), name='deliverysqeuqnce'),
 
-
-
-
-
+    
     ################IRIS########################
     path('layerview/', LayerMFView.as_view(), name='layerview'), #iris
     path('inventorycount_row/', InventoryCountListView.as_view(), name='inventoryrow'),
