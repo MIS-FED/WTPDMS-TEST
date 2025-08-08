@@ -130,3 +130,13 @@ class DeliverySequenceViewSerializer(serializers.ModelSerializer):
     class Meta:
         model = DeliverySequenceViewModel
         fields = '__all__'
+        
+class TripDetailsViewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TripDetailsViewModel
+        fields = '__all__'
+
+class DMSTripListViewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DMSTripListViewModel
+        fields = '__all__'

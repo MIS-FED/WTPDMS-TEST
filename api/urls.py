@@ -32,9 +32,11 @@ urlpatterns = [
     path('trip-ticket-receive/', TripTicketReceiveView.as_view(), name='receiveView'),
     path('cancel-outslip/', CancelOutslipView.as_view(), name='cancelOutslip'),
     path('tripcustomer/', TripCustomerView.as_view(), name='tripcustomer'), #tsl
+    path('triplistdms/', DMSTripListView.as_view(), name='dmstriplist'),
     path('customerdetails/', CustomerDetailView.as_view(), name='customerdetail'), #tsl
     path('manage-attendance-tsl/', ManageAttendanceTSL.as_view(), name='manageattendancetsl'), #tsl\
-
+    path('bulk-upload/', BulkUploadView.as_view(), name='bulkupload'),
+    path('bulk-view/', BulkDetailView.as_view(), name='bulkview'),
 
 
 
@@ -47,6 +49,7 @@ urlpatterns = [
     path('branch_reports/', BranchReportsView.as_view(), name='branchreports'),
     path('attendance_reports/', AttendanceReports.as_view(), name='attendancereports'),
     path('initial_reports/', InitialReports.as_view(), name='initialreports'),
+    path('initial_attendance/', InitialAttendance.as_view(), name='initialattendance'),
     path('view_outslip_report/', ViewOutslipReport.as_view(), name='viewoutslkipreport'),
     path('delivery_sequence/', DeliverySequenceView.as_view(), name='deliverysqeuqnce'),
 

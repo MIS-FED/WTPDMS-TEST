@@ -155,10 +155,10 @@ DATABASES = {
     },
     'tsl_db': {
         'ENGINE': 'mssql',
-        'NAME': 'bootstrap2_dms_distri',
+        'NAME': 'bootstrap2_tsl',
         'USER': 'sa',
         'PASSWORD':'WTP9@!979#100420!9',
-        'HOST':'192.168.0.33\MSSQLTESTSERVER',
+        'HOST':'192.168.0.32',
         'OPTIONS': {
             'driver': 'ODBC Driver 17 for SQL Server',
             'extra_params': 'Encrypt=no;TrustServerCertificate=yes',

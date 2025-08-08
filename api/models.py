@@ -355,9 +355,10 @@ class BranchOtherDetailsModel(models.Model):
 class DeliverySequenceViewModel(models.Model):
     trip_ticket_id = models.BigIntegerField(primary_key=True)
     trip_ticket_no = models.BigIntegerField()
-    branch_code = models.CharField(max_length=255)
+    trip_ticket_del_to_id = models.BigIntegerField()
+    deliver_to_name = models.CharField(max_length=255)
     branch_id = models.BigIntegerField()
-    branch_name = models.CharField(max_length=255)
+    entity_id = models.BigIntegerField()
     latitude = models.FloatField()
     longitude = models.FloatField()
     seq = models.BigIntegerField()
@@ -367,3 +368,56 @@ class DeliverySequenceViewModel(models.Model):
         db_table="vw_scm_tr_trip_ticket_detail_delivery_sequence"
         managed = False
     
+class TripDetailsViewModel(models.Model):
+    trip_ticket_id = models.BigIntegerField()
+    trip_ticket_no = models.BigIntegerField()
+    branch_id = models.BigIntegerField()
+    branch_name = models.CharField(max_length=255)
+    entity_id = models.BigIntegerField()
+    entity_name = models.CharField(max_length=255)
+    trip_ticket_detail_id = models.BigAutoField(primary_key=True)
+    ref_trans_date = models.DateTimeField()
+    ref_trans_id = models.BigIntegerField()
+    ref_trans_no = models.CharField(max_length=255)
+    full_address = models.TextField()
+    trans_name = models.CharField(max_length=255)
+    received_by = models.CharField(max_length=255)
+    received_date = models.DateTimeField()
+    remarks = models.TextField()
+    branch_charges = models.DecimalField(max_digits=18, decimal_places=2)
+    document_amount = models.DecimalField(max_digits=18, decimal_places=2)
+    detail_volume = models.DecimalField(max_digits=18, decimal_places=6)
+    is_posted = models.BooleanField()
+    is_delivered = models.BooleanField()
+    cancel_reason = models.CharField(max_length=255)
+    updated_date = models.DateTimeField()
+    created_date = models.DateTimeField()
+    received_by = models.CharField(max_length=255)
+    cancel_reason = models.CharField(max_length=255)
+    contact_person = models.CharField(max_length=255)
+    contact_no = models.CharField(max_length=255)
+    trip_ticket_del_to_id = models.BigIntegerField()
+    class Meta:
+        db_table = 'vw_scm_tr_trip_ticket_detail_by_del_seq'
+        managed = False
+
+class DMSTripListViewModel(models.Model):
+    trip_ticket_id = models.BigIntegerField(primary_key=True)
+    trip_ticket_no = models.BigIntegerField()
+    trip_ticket_date = models.DateTimeField()
+    plate_no = models.CharField(max_length=20)
+    entity_id = models.BigIntegerField()
+    entity_name = models.CharField(max_length=255)
+    asst_entity_id = models.BigIntegerField()
+    asst_entity_name = models.CharField(max_length=255)
+    dispatched_by = models.BigIntegerField()
+    dispatched_by_name = models.CharField(max_length=255)
+    remarks = models.CharField(max_length=255)
+    entity_contact = models.CharField(max_length=255)
+    asst_entity_contact = models.CharField(max_length=255)
+    dispatched_by_contact = models.CharField(max_length=255)
+    
+    class Meta:
+        db_table = 'vw_scm_tr_trip_ticket_dms_trip_list'
+        managed = False
+
